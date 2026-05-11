@@ -11,6 +11,7 @@ from itertools import combinations
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_PATH = BASE_DIR / "data" / "products.json"
+TITLE_FONT = ("Arial", 16, "bold")
 
 
 QUALITY_METRICS = {
@@ -203,47 +204,71 @@ def create_optimization_tab(parent, products):
     title = ttk.Label(
         parent,
         text="Оптимизация подбора оборудования",
-        font=("Arial", 16)
+        font=TITLE_FONT
     )
     title.pack(pady=10)
 
     product_types = sorted(set(product["type"] for product in products))
     selected_type = tk.StringVar(value=product_types[0])
 
-    ttk.Label(parent, text="Тип продукции:").pack(pady=5)
+    parameters_frame = ttk.LabelFrame(parent, text="Параметры подбора")
+    parameters_frame.pack(fill="x", padx=10, pady=8)
+
+    ttk.Label(parameters_frame, text="Тип продукции:").grid(
+        row=0,
+        column=0,
+        padx=5,
+        pady=8,
+        sticky="w"
+    )
 
     type_box = ttk.Combobox(
-        parent,
+        parameters_frame,
         textvariable=selected_type,
         values=product_types,
         state="readonly",
         width=40
     )
-    type_box.pack(pady=5)
+    type_box.grid(row=0, column=1, padx=5, pady=8, sticky="w")
 
-    ttk.Label(parent, text="Бюджет, руб.:").pack(pady=5)
+    ttk.Label(parameters_frame, text="Бюджет, руб.:").grid(
+        row=0,
+        column=2,
+        padx=5,
+        pady=8,
+        sticky="w"
+    )
 
-    budget_entry = ttk.Entry(parent, width=30)
-    budget_entry.pack(pady=5)
+    budget_entry = ttk.Entry(parameters_frame, width=18)
+    budget_entry.grid(row=0, column=3, padx=5, pady=8, sticky="w")
     budget_entry.insert(0, "2000000")
 
-    ttk.Label(parent, text="Минимальный требуемый объем, м³:").pack(pady=5)
+    ttk.Label(parameters_frame, text="Мин. объем, м³:").grid(
+        row=0,
+        column=4,
+        padx=5,
+        pady=8,
+        sticky="w"
+    )
 
-    volume_entry = ttk.Entry(parent, width=30)
-    volume_entry.pack(pady=5)
+    volume_entry = ttk.Entry(parameters_frame, width=18)
+    volume_entry.grid(row=0, column=5, padx=5, pady=8, sticky="w")
     volume_entry.insert(0, "200")
 
+    result_frame = ttk.LabelFrame(parent, text="Результат оптимизации")
+    result_frame.pack(fill="both", expand=True, padx=10, pady=8)
+
     result_label = ttk.Label(
-        parent,
+        result_frame,
         text="",
         wraplength=950,
         justify="left"
     )
-    result_label.pack(pady=10)
+    result_label.pack(fill="x", padx=10, pady=8)
 
     columns = ("name", "quality", "volume", "price")
 
-    result_table = ttk.Treeview(parent, columns=columns, show="headings", height=7)
+    result_table = ttk.Treeview(result_frame, columns=columns, show="headings", height=7)
 
     result_table.heading("name", text="Название")
     result_table.heading("quality", text="Q")
@@ -255,7 +280,7 @@ def create_optimization_tab(parent, products):
     result_table.column("volume", width=120)
     result_table.column("price", width=140)
 
-    result_table.pack(fill="x", padx=10, pady=10)
+    result_table.pack(fill="both", expand=True, padx=10, pady=10)
 
     def calculate_optimization():
         for row in result_table.get_children():
@@ -319,39 +344,10 @@ def create_optimization_tab(parent, products):
             )
 
     ttk.Button(
-        parent,
+        parameters_frame,
         text="Подобрать оборудование",
         command=calculate_optimization
-    ).pack(pady=10)
-
-
-    def calculate_optimization():
-        try:
-            budget = float(budget_entry.get())
-        except ValueError:
-            result_label.config(text="Ошибка: введите числовое значение бюджета.")
-            return
-
-        if budget <= 0:
-            result_label.config(text="Ошибка: бюджет должен быть больше нуля.")
-            return
-
-        best_product = find_best_product_by_budget(products, budget)
-
-        if best_product is None:
-            result_label.config(
-                text="Нет продукции, которая укладывается в указанный бюджет."
-            )
-            return
-
-        result_label.config(
-            text=(
-                f"Оптимальный выбор: {best_product['name']}\n"
-                f"Тип: {best_product['type']}\n"
-                f"Цена: {best_product['price']} руб.\n"
-                f"Показатель качества Q: {round(best_product['quality_score'], 3)}"
-            )
-        )
+    ).grid(row=0, column=6, padx=10, pady=8, sticky="w")
 
 
 
@@ -360,7 +356,7 @@ def create_forecast_tab(parent, products):
     title = ttk.Label(
         parent,
         text="Прогноз продаж продукции",
-        font=("Arial", 16)
+        font=TITLE_FONT
     )
     title.pack(pady=10)
 
@@ -368,8 +364,8 @@ def create_forecast_tab(parent, products):
     selected_type = tk.StringVar(value=product_types[0])
     product_query = tk.StringVar()
 
-    controls_frame = ttk.Frame(parent)
-    controls_frame.pack(fill="x", padx=10, pady=5)
+    controls_frame = ttk.LabelFrame(parent, text="Параметры прогноза")
+    controls_frame.pack(fill="x", padx=10, pady=8)
 
     ttk.Label(controls_frame, text="Тип продукции:").grid(
         row=0,
@@ -434,7 +430,13 @@ def create_forecast_tab(parent, products):
     result_label = ttk.Label(parent, text="")
     result_label.pack(pady=10)
 
-    chart_frame = ttk.Frame(parent)
+    ttk.Label(
+        parent,
+        text="Пунктирная линия отделяет фактические данные от прогнозных значений.",
+        foreground="#555555"
+    ).pack(pady=2)
+
+    chart_frame = ttk.LabelFrame(parent, text="График прогноза")
     chart_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
     def get_products_by_type():
@@ -591,7 +593,7 @@ def create_data_tab(parent, products):
     title = ttk.Label(
         parent,
         text="Данные о холодильном оборудовании",
-        font=("Arial", 16)
+        font=TITLE_FONT
     )
     title.pack(pady=10)
 
@@ -605,6 +607,9 @@ def create_data_tab(parent, products):
     search_entry = ttk.Entry(search_frame, textvariable=search_var, width=40)
     search_entry.pack(side="left", padx=5)
 
+    status_label = ttk.Label(search_frame, text="")
+    status_label.pack(side="left", padx=10)
+
     columns = (
         "name",
         "type",
@@ -617,7 +622,7 @@ def create_data_tab(parent, products):
         "price",
     )
 
-    table_frame = ttk.Frame(parent)
+    table_frame = ttk.LabelFrame(parent, text="Список продукции")
     table_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
     tree = ttk.Treeview(table_frame, columns=columns, show="headings")
@@ -663,6 +668,8 @@ def create_data_tab(parent, products):
                 ),
             )
 
+        status_label.config(text=f"Найдено: {len(filtered_products)} из {len(products)}")
+
     def update_search(*args):
         search_text = search_var.get().lower()
 
@@ -705,7 +712,7 @@ def create_quality_tab(parent, products):
     title = ttk.Label(
         parent,
         text="Оценка технического уровня продукции",
-        font=("Arial", 16)
+        font=TITLE_FONT
     )
     title.pack(pady=10)
 
@@ -721,9 +728,12 @@ def create_quality_tab(parent, products):
     search_entry = ttk.Entry(search_frame, textvariable=search_var, width=40)
     search_entry.pack(side="left", padx=5)
 
+    status_label = ttk.Label(search_frame, text="")
+    status_label.pack(side="left", padx=10)
+
     columns = ("place", "name", "type", "quality_score", "price")
 
-    table_frame = ttk.Frame(parent)
+    table_frame = ttk.LabelFrame(parent, text="Рейтинг продукции")
     table_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
     tree = ttk.Treeview(table_frame, columns=columns, show="headings")
@@ -756,6 +766,8 @@ def create_quality_tab(parent, products):
                     result["price"],
                 ),
             )
+
+        status_label.config(text=f"Найдено: {len(filtered_results)} из {len(quality_results)}")
 
     def update_search(*args):
         search_text = search_var.get().lower()
@@ -891,7 +903,7 @@ def create_product_profile_tab(parent, products):
     title = ttk.Label(
         parent,
         text="Радиальная диаграмма характеристик товара",
-        font=("Arial", 16)
+        font=TITLE_FONT
     )
     title.pack(pady=10)
 
@@ -899,7 +911,7 @@ def create_product_profile_tab(parent, products):
     selected_type = tk.StringVar(value=product_types[0])
     product_query = tk.StringVar()
 
-    controls_frame = ttk.Frame(parent)
+    controls_frame = ttk.LabelFrame(parent, text="Выбор товара")
     controls_frame.pack(fill="x", padx=10, pady=5)
 
     ttk.Label(controls_frame, text="Тип продукции:").grid(
@@ -962,7 +974,7 @@ def create_product_profile_tab(parent, products):
 
     product_listbox.configure(yscrollcommand=list_scrollbar.set)
 
-    chart_frame = ttk.Frame(parent)
+    chart_frame = ttk.LabelFrame(parent, text="Профиль характеристик")
     chart_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
     def get_products_by_type():
@@ -1116,34 +1128,88 @@ def create_product_profile_tab(parent, products):
     reset_products_for_type()
 
 
+def create_info_tab(parent):
+    title = ttk.Label(
+        parent,
+        text="Информация о программе",
+        font=TITLE_FONT
+    )
+    title.pack(pady=10)
+
+    info_frame = ttk.LabelFrame(parent, text="Назначение и методика")
+    info_frame.pack(fill="both", expand=True, padx=16, pady=12)
+
+    info_text = (
+        "Информационно-аналитическая система разработана для предприятия "
+        "«Производитель холодильного оборудования».\n\n"
+        "В программе анализируются три типа продукции: холодильные камеры, "
+        "морозильные установки и сплит-системы.\n\n"
+        "Оценка технического уровня выполняется по квалиметрической модели. "
+        "Итоговый показатель качества Q рассчитывается как сумма произведений "
+        "нормированных показателей на весовые коэффициенты:\n\n"
+        "Q = Σ(weight * q)\n\n"
+        "Для показателей, где большее значение лучше, используется нормирование "
+        "q = x / max(x). Для показателей, где меньшее значение лучше, используется "
+        "q = min(x) / x.\n\n"
+        "Прогноз продаж строится по линейному тренду на основе истории продаж за "
+        "предыдущие годы.\n\n"
+        "Оптимизация подбирает набор оборудования выбранного типа с учетом бюджета "
+        "и минимального требуемого объема."
+    )
+
+    ttk.Label(
+        info_frame,
+        text=info_text,
+        wraplength=980,
+        justify="left"
+    ).pack(fill="x", padx=14, pady=12)
+
+    weights_frame = ttk.LabelFrame(parent, text="Весовые коэффициенты")
+    weights_frame.pack(fill="x", padx=16, pady=8)
+
+    for row_index, metric in enumerate(QUALITY_METRICS.values()):
+        ttk.Label(
+            weights_frame,
+            text=metric["name"]
+        ).grid(row=row_index, column=0, padx=12, pady=4, sticky="w")
+
+        ttk.Label(
+            weights_frame,
+            text=str(metric["weight"])
+        ).grid(row=row_index, column=1, padx=12, pady=4, sticky="w")
+
+
 def main():
     products = load_products()
 
     root = tk.Tk()
     root.title("Информационно-аналитическая система")
-    root.geometry("1100x650")
+    root.geometry("1200x720")
 
     tabs = ttk.Notebook(root)
     tabs.pack(fill="both", expand=True)
-    profile_tab = ttk.Frame(tabs)
 
     data_tab = ttk.Frame(tabs)
     quality_tab = ttk.Frame(tabs)
+    profile_tab = ttk.Frame(tabs)
     forecast_tab = ttk.Frame(tabs)
     optimization_tab = ttk.Frame(tabs)
+    info_tab = ttk.Frame(tabs)
 
     tabs.add(data_tab, text="Данные")
     tabs.add(quality_tab, text="Оценка качества")
+    tabs.add(profile_tab, text="Профиль товара")
     tabs.add(forecast_tab, text="Прогноз")
     tabs.add(optimization_tab, text="Оптимизация")
-    tabs.add(profile_tab, text="Профиль товара")
+    tabs.add(info_tab, text="Информация")
 
 
-    create_product_profile_tab(profile_tab, products)
     create_data_tab(data_tab, products)
     create_quality_tab(quality_tab, products)
+    create_product_profile_tab(profile_tab, products)
     create_forecast_tab(forecast_tab, products)
     create_optimization_tab(optimization_tab, products)
+    create_info_tab(info_tab)
 
 
     root.mainloop()
