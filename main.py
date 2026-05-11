@@ -111,79 +111,6 @@ def get_normalized_product_values(product, products):
     return metric_names, normalized_values
 
 
-def create_product_profile_tab(parent, products):
-    title = ttk.Label(
-        parent,
-        text="Радиальная диаграмма характеристик товара",
-        font=("Arial", 16)
-    )
-    title.pack(pady=10)
-
-    product_names = [product["name"] for product in products]
-    selected_product = tk.StringVar(value=product_names[0])
-
-    ttk.Label(parent, text="Выберите товар:").pack(pady=5)
-
-    product_box = ttk.Combobox(
-        parent,
-        textvariable=selected_product,
-        values=product_names,
-        state="readonly",
-        width=55
-    )
-    product_box.pack(pady=5)
-
-    chart_frame = ttk.Frame(parent)
-    chart_frame.pack(fill="both", expand=True, padx=10, pady=10)
-
-    def show_profile():
-        for widget in chart_frame.winfo_children():
-            widget.destroy()
-
-        product = next(
-            item for item in products
-            if item["name"] == selected_product.get()
-        )
-
-        metric_names, values = get_normalized_product_values(product, products)
-
-        values.append(values[0])
-        angles = []
-
-        for index in range(len(metric_names)):
-            angle = 2 * 3.14159 * index / len(metric_names)
-            angles.append(angle)
-
-        angles.append(angles[0])
-
-        figure = Figure(figsize=(6, 5), dpi=100)
-        axes = figure.add_subplot(111, polar=True)
-
-        axes.plot(angles, values, linewidth=2)
-        axes.fill(angles, values, alpha=0.25)
-
-        axes.set_xticks(angles[:-1])
-        axes.set_xticklabels(metric_names, fontsize=8)
-
-        axes.set_ylim(0, 1)
-        axes.set_title(product["name"], fontsize=12)
-
-        axes.grid(True)
-
-        figure.tight_layout()
-
-        canvas = FigureCanvasTkAgg(figure, chart_frame)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True)
-
-    ttk.Button(
-        parent,
-        text="Построить диаграмму",
-        command=show_profile
-    ).pack(pady=10)
-
-    show_profile()
-
 
 
 def calculate_forecast(sales_history, forecast_periods=3):
@@ -437,20 +364,72 @@ def create_forecast_tab(parent, products):
     )
     title.pack(pady=10)
 
-    product_names = [product["name"] for product in products]
+    product_types = sorted(set(product["type"] for product in products))
+    selected_type = tk.StringVar(value=product_types[0])
+    product_query = tk.StringVar()
 
-    selected_product = tk.StringVar(value=product_names[0])
+    controls_frame = ttk.Frame(parent)
+    controls_frame.pack(fill="x", padx=10, pady=5)
 
-    ttk.Label(parent, text="Выберите продукцию:").pack(pady=5)
-
-    product_box = ttk.Combobox(
-        parent,
-        textvariable=selected_product,
-        values=product_names,
-        state="readonly",
-        width=50
+    ttk.Label(controls_frame, text="Тип продукции:").grid(
+        row=0,
+        column=0,
+        padx=5,
+        pady=5,
+        sticky="w"
     )
-    product_box.pack(pady=5)
+
+    type_box = ttk.Combobox(
+        controls_frame,
+        textvariable=selected_type,
+        values=product_types,
+        state="readonly",
+        width=35
+    )
+    type_box.grid(row=0, column=1, padx=5, pady=5, sticky="w")
+
+    ttk.Label(controls_frame, text="Товар:").grid(
+        row=1,
+        column=0,
+        padx=5,
+        pady=5,
+        sticky="w"
+    )
+
+    product_entry = ttk.Entry(
+        controls_frame,
+        textvariable=product_query,
+        width=55
+    )
+    product_entry.grid(row=1, column=1, padx=5, pady=5, sticky="w")
+
+    dropdown_button = ttk.Button(
+        controls_frame,
+        text="▼",
+        width=3
+    )
+    dropdown_button.grid(row=1, column=2, padx=2, pady=5, sticky="w")
+
+    dropdown_frame = ttk.Frame(controls_frame)
+    dropdown_frame.grid(row=2, column=1, columnspan=2, padx=5, sticky="w")
+    dropdown_frame.grid_remove()
+
+    product_listbox = tk.Listbox(
+        dropdown_frame,
+        height=7,
+        width=58,
+        exportselection=False
+    )
+    product_listbox.grid(row=0, column=0, sticky="nsew")
+
+    list_scrollbar = ttk.Scrollbar(
+        dropdown_frame,
+        orient="vertical",
+        command=product_listbox.yview
+    )
+    list_scrollbar.grid(row=0, column=1, sticky="ns")
+
+    product_listbox.configure(yscrollcommand=list_scrollbar.set)
 
     result_label = ttk.Label(parent, text="")
     result_label.pack(pady=10)
@@ -458,14 +437,62 @@ def create_forecast_tab(parent, products):
     chart_frame = ttk.Frame(parent)
     chart_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
-    def show_forecast():
+    def get_products_by_type():
+        filtered_products = [
+            product for product in products
+            if product["type"] == selected_type.get()
+        ]
+
+        return sorted(filtered_products, key=lambda product: product["name"])
+
+    def get_product_by_name(product_name):
+        for product in products:
+            same_type = product["type"] == selected_type.get()
+            same_name = product["name"] == product_name
+
+            if same_type and same_name:
+                return product
+
+        return None
+
+    def clear_chart_with_message(message):
         for widget in chart_frame.winfo_children():
             widget.destroy()
 
-        product = next(
-            item for item in products
-            if item["name"] == selected_product.get()
-        )
+        result_label.config(text="")
+
+        ttk.Label(
+            chart_frame,
+            text=message,
+            font=("Arial", 14)
+        ).pack(pady=30)
+
+    def get_filtered_product_names():
+        typed_text = product_query.get().lower()
+
+        filtered_products = [
+            product for product in get_products_by_type()
+            if typed_text in product["name"].lower()
+        ]
+
+        return [product["name"] for product in filtered_products]
+
+    def update_dropdown():
+        product_names = get_filtered_product_names()
+
+        product_listbox.delete(0, tk.END)
+
+        for name in product_names:
+            product_listbox.insert(tk.END, name)
+
+        if product_names:
+            dropdown_frame.grid()
+        else:
+            dropdown_frame.grid_remove()
+
+    def show_forecast(product):
+        for widget in chart_frame.winfo_children():
+            widget.destroy()
 
         sales_history = product["sales_history"]
         forecast = calculate_forecast(sales_history)
@@ -482,7 +509,7 @@ def create_forecast_tab(parent, products):
 
         axes.plot(years, values, marker="o")
         axes.axvline(2025, linestyle="--")
-        axes.set_title("Прогноз продаж")
+        axes.set_title(f"Прогноз продаж: {product['name']}")
         axes.set_xlabel("Год")
         axes.set_ylabel("Количество продаж")
         axes.grid(True)
@@ -493,11 +520,70 @@ def create_forecast_tab(parent, products):
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
 
-    ttk.Button(
-        parent,
-        text="Построить прогноз",
-        command=show_forecast
-    ).pack(pady=10)
+    def select_product_from_list(event=None):
+        selected_indexes = product_listbox.curselection()
+
+        if not selected_indexes:
+            return
+
+        product_name = product_listbox.get(selected_indexes[0])
+        product_query.set(product_name)
+        dropdown_frame.grid_remove()
+
+        product = get_product_by_name(product_name)
+
+        if product is not None:
+            show_forecast(product)
+
+    def on_product_typing(event=None):
+        update_dropdown()
+
+        product = get_product_by_name(product_query.get())
+
+        if product is not None:
+            show_forecast(product)
+        elif not get_filtered_product_names():
+            clear_chart_with_message("Товар не найден")
+
+    def open_dropdown(event=None):
+        update_dropdown()
+        product_entry.focus_set()
+
+    def reset_products_for_type(event=None):
+        type_products = get_products_by_type()
+
+        if not type_products:
+            product_query.set("")
+            dropdown_frame.grid_remove()
+            clear_chart_with_message("Для выбранного типа товары не найдены")
+            return
+
+        first_product = type_products[0]
+        product_query.set(first_product["name"])
+        dropdown_frame.grid_remove()
+        show_forecast(first_product)
+
+    def select_first_from_dropdown(event=None):
+        if product_listbox.size() == 0:
+            return
+
+        product_listbox.selection_clear(0, tk.END)
+        product_listbox.selection_set(0)
+        select_product_from_list()
+
+    type_box.bind("<<ComboboxSelected>>", reset_products_for_type)
+
+    product_entry.bind("<FocusIn>", open_dropdown)
+    product_entry.bind("<Button-1>", open_dropdown)
+    product_entry.bind("<KeyRelease>", on_product_typing)
+    product_entry.bind("<Return>", select_first_from_dropdown)
+
+    dropdown_button.configure(command=open_dropdown)
+
+    product_listbox.bind("<<ListboxSelect>>", select_product_from_list)
+    product_listbox.bind("<Return>", select_product_from_list)
+
+    reset_products_for_type()
 
 
 
@@ -508,6 +594,16 @@ def create_data_tab(parent, products):
         font=("Arial", 16)
     )
     title.pack(pady=10)
+
+    search_frame = ttk.Frame(parent)
+    search_frame.pack(fill="x", padx=10, pady=5)
+
+    ttk.Label(search_frame, text="Поиск по названию:").pack(side="left", padx=5)
+
+    search_var = tk.StringVar()
+
+    search_entry = ttk.Entry(search_frame, textvariable=search_var, width=40)
+    search_entry.pack(side="left", padx=5)
 
     columns = (
         "name",
@@ -546,22 +642,38 @@ def create_data_tab(parent, products):
     tree.column("service_life", width=130)
     tree.column("price", width=120)
 
-    for product in products:
-        tree.insert(
-            "",
-            tk.END,
-            values=(
-                product["name"],
-                product["type"],
-                product["cooling_capacity"],
-                product["volume"],
-                product["energy_efficiency"],
-                product["temperature_stability"],
-                product["noise"],
-                product["service_life"],
-                product["price"],
-            ),
-        )
+    def fill_table(filtered_products):
+        for row in tree.get_children():
+            tree.delete(row)
+
+        for product in filtered_products:
+            tree.insert(
+                "",
+                tk.END,
+                values=(
+                    product["name"],
+                    product["type"],
+                    product["cooling_capacity"],
+                    product["volume"],
+                    product["energy_efficiency"],
+                    product["temperature_stability"],
+                    product["noise"],
+                    product["service_life"],
+                    product["price"],
+                ),
+            )
+
+    def update_search(*args):
+        search_text = search_var.get().lower()
+
+        filtered_products = [
+            product for product in products
+            if search_text in product["name"].lower()
+        ]
+
+        fill_table(filtered_products)
+
+    search_var.trace_add("write", update_search)
 
     vertical_scrollbar = ttk.Scrollbar(
         table_frame,
@@ -586,6 +698,8 @@ def create_data_tab(parent, products):
     table_frame.rowconfigure(0, weight=1)
     table_frame.columnconfigure(0, weight=1)
 
+    fill_table(products)
+
 
 def create_quality_tab(parent, products):
     title = ttk.Label(
@@ -596,6 +710,16 @@ def create_quality_tab(parent, products):
     title.pack(pady=10)
 
     quality_results = calculate_quality(products)
+
+    search_frame = ttk.Frame(parent)
+    search_frame.pack(fill="x", padx=10, pady=5)
+
+    ttk.Label(search_frame, text="Поиск по названию:").pack(side="left", padx=5)
+
+    search_var = tk.StringVar()
+
+    search_entry = ttk.Entry(search_frame, textvariable=search_var, width=40)
+    search_entry.pack(side="left", padx=5)
 
     columns = ("place", "name", "type", "quality_score", "price")
 
@@ -616,18 +740,34 @@ def create_quality_tab(parent, products):
     tree.column("quality_score", width=120)
     tree.column("price", width=120)
 
-    for index, result in enumerate(quality_results, start=1):
-        tree.insert(
-            "",
-            tk.END,
-            values=(
-                index,
-                result["name"],
-                result["type"],
-                round(result["quality_score"], 3),
-                result["price"],
-            ),
-        )
+    def fill_quality_table(filtered_results):
+        for row in tree.get_children():
+            tree.delete(row)
+
+        for index, result in enumerate(filtered_results, start=1):
+            tree.insert(
+                "",
+                tk.END,
+                values=(
+                    index,
+                    result["name"],
+                    result["type"],
+                    round(result["quality_score"], 3),
+                    result["price"],
+                ),
+            )
+
+    def update_search(*args):
+        search_text = search_var.get().lower()
+
+        filtered_results = [
+            result for result in quality_results
+            if search_text in result["name"].lower()
+        ]
+
+        fill_quality_table(filtered_results)
+
+    search_var.trace_add("write", update_search)
 
     vertical_scrollbar = ttk.Scrollbar(
         table_frame,
@@ -642,6 +782,8 @@ def create_quality_tab(parent, products):
 
     table_frame.rowconfigure(0, weight=1)
     table_frame.columnconfigure(0, weight=1)
+
+    fill_quality_table(quality_results)
 
     weights_text = "Весовые коэффициенты: "
 
@@ -743,6 +885,235 @@ def create_quality_tab(parent, products):
 
     
 
+
+
+def create_product_profile_tab(parent, products):
+    title = ttk.Label(
+        parent,
+        text="Радиальная диаграмма характеристик товара",
+        font=("Arial", 16)
+    )
+    title.pack(pady=10)
+
+    product_types = sorted(set(product["type"] for product in products))
+    selected_type = tk.StringVar(value=product_types[0])
+    product_query = tk.StringVar()
+
+    controls_frame = ttk.Frame(parent)
+    controls_frame.pack(fill="x", padx=10, pady=5)
+
+    ttk.Label(controls_frame, text="Тип продукции:").grid(
+        row=0,
+        column=0,
+        padx=5,
+        pady=5,
+        sticky="w"
+    )
+
+    type_box = ttk.Combobox(
+        controls_frame,
+        textvariable=selected_type,
+        values=product_types,
+        state="readonly",
+        width=35
+    )
+    type_box.grid(row=0, column=1, padx=5, pady=5, sticky="w")
+
+    ttk.Label(controls_frame, text="Товар:").grid(
+        row=1,
+        column=0,
+        padx=5,
+        pady=5,
+        sticky="w"
+    )
+
+    product_entry = ttk.Entry(
+        controls_frame,
+        textvariable=product_query,
+        width=55
+    )
+    product_entry.grid(row=1, column=1, padx=5, pady=5, sticky="w")
+
+    dropdown_button = ttk.Button(
+        controls_frame,
+        text="▼",
+        width=3
+    )
+    dropdown_button.grid(row=1, column=2, padx=2, pady=5, sticky="w")
+
+    dropdown_frame = ttk.Frame(controls_frame)
+    dropdown_frame.grid(row=2, column=1, columnspan=2, padx=5, sticky="w")
+    dropdown_frame.grid_remove()
+
+    product_listbox = tk.Listbox(
+        dropdown_frame,
+        height=7,
+        width=58,
+        exportselection=False
+    )
+    product_listbox.grid(row=0, column=0, sticky="nsew")
+
+    list_scrollbar = ttk.Scrollbar(
+        dropdown_frame,
+        orient="vertical",
+        command=product_listbox.yview
+    )
+    list_scrollbar.grid(row=0, column=1, sticky="ns")
+
+    product_listbox.configure(yscrollcommand=list_scrollbar.set)
+
+    chart_frame = ttk.Frame(parent)
+    chart_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+    def get_products_by_type():
+        filtered_products = [
+            product for product in products
+            if product["type"] == selected_type.get()
+        ]
+
+        return sorted(filtered_products, key=lambda product: product["name"])
+
+    def get_product_by_name(product_name):
+        for product in products:
+            same_type = product["type"] == selected_type.get()
+            same_name = product["name"] == product_name
+
+            if same_type and same_name:
+                return product
+
+        return None
+
+    def clear_chart_with_message(message):
+        for widget in chart_frame.winfo_children():
+            widget.destroy()
+
+        ttk.Label(
+            chart_frame,
+            text=message,
+            font=("Arial", 14)
+        ).pack(pady=30)
+
+    def get_filtered_product_names():
+        typed_text = product_query.get().lower()
+
+        filtered_products = [
+            product for product in get_products_by_type()
+            if typed_text in product["name"].lower()
+        ]
+
+        return [product["name"] for product in filtered_products]
+
+    def update_dropdown():
+        product_names = get_filtered_product_names()
+
+        product_listbox.delete(0, tk.END)
+
+        for name in product_names:
+            product_listbox.insert(tk.END, name)
+
+        if product_names:
+            dropdown_frame.grid()
+        else:
+            dropdown_frame.grid_remove()
+
+    def show_profile(product):
+        for widget in chart_frame.winfo_children():
+            widget.destroy()
+
+        metric_names, values = get_normalized_product_values(product, products)
+
+        values.append(values[0])
+        angles = []
+
+        for index in range(len(metric_names)):
+            angle = 2 * 3.14159 * index / len(metric_names)
+            angles.append(angle)
+
+        angles.append(angles[0])
+
+        figure = Figure(figsize=(6, 5), dpi=100)
+        axes = figure.add_subplot(111, polar=True)
+
+        axes.plot(angles, values, linewidth=2)
+        axes.fill(angles, values, alpha=0.25)
+
+        axes.set_xticks(angles[:-1])
+        axes.set_xticklabels(metric_names, fontsize=8)
+
+        axes.set_ylim(0, 1)
+        axes.set_title(product["name"], fontsize=12)
+        axes.grid(True)
+
+        figure.tight_layout()
+
+        canvas = FigureCanvasTkAgg(figure, chart_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+
+    def select_product_from_list(event=None):
+        selected_indexes = product_listbox.curselection()
+
+        if not selected_indexes:
+            return
+
+        product_name = product_listbox.get(selected_indexes[0])
+        product_query.set(product_name)
+        dropdown_frame.grid_remove()
+
+        product = get_product_by_name(product_name)
+
+        if product is not None:
+            show_profile(product)
+
+    def on_product_typing(event=None):
+        update_dropdown()
+
+        product = get_product_by_name(product_query.get())
+
+        if product is not None:
+            show_profile(product)
+        elif not get_filtered_product_names():
+            clear_chart_with_message("Товар не найден")
+
+    def open_dropdown(event=None):
+        update_dropdown()
+        product_entry.focus_set()
+
+    def reset_products_for_type(event=None):
+        type_products = get_products_by_type()
+
+        if not type_products:
+            product_query.set("")
+            dropdown_frame.grid_remove()
+            clear_chart_with_message("Для выбранного типа товары не найдены")
+            return
+
+        first_product = type_products[0]
+        product_query.set(first_product["name"])
+        dropdown_frame.grid_remove()
+        show_profile(first_product)
+
+    def select_first_from_dropdown(event=None):
+        if product_listbox.size() == 0:
+            return
+
+        product_listbox.selection_clear(0, tk.END)
+        product_listbox.selection_set(0)
+        select_product_from_list()
+
+    type_box.bind("<<ComboboxSelected>>", reset_products_for_type)
+
+    product_entry.bind("<FocusIn>", open_dropdown)
+    product_entry.bind("<Button-1>", open_dropdown)
+    product_entry.bind("<KeyRelease>", on_product_typing)
+    product_entry.bind("<Return>", select_first_from_dropdown)
+
+    dropdown_button.configure(command=open_dropdown)
+
+    product_listbox.bind("<<ListboxSelect>>", select_product_from_list)
+    product_listbox.bind("<Return>", select_product_from_list)
+
+    reset_products_for_type()
 
 
 def main():
