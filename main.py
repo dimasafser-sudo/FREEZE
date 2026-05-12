@@ -1,17 +1,49 @@
+import csv
 import json
+import random
 from pathlib import Path
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, filedialog, messagebox
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 from itertools import combinations
+
+try:
+    from sklearn.model_selection import train_test_split
+    from sklearn.linear_model import LinearRegression
+    from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+except ModuleNotFoundError:
+    train_test_split = None
+    LinearRegression = None
+    mean_absolute_error = None
+    mean_squared_error = None
+    r2_score = None
 
 
 
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_PATH = BASE_DIR / "data" / "products.json"
+DEMAND_DATA_PATH = BASE_DIR / "Refrigerator.csv"
 TITLE_FONT = ("Arial", 16, "bold")
+
+DEMAND_FEATURES = [
+    "avg_refrigerator_price",
+    "energy_efficiency_class",
+    "is_seasonal_demand",
+    "advertising_budget",
+    "warranty_period",
+]
+
+DEMAND_TARGET = "monthly_refrigerator_sales"
+
+DEMAND_FEATURE_LABELS = {
+    "avg_refrigerator_price": "Средняя цена холодильного оборудования, тыс. руб.",
+    "energy_efficiency_class": "Класс энергоэффективности (A=3, B=2, C=1)",
+    "is_seasonal_demand": "Сезонный спрос (1 - да, 0 - нет)",
+    "advertising_budget": "Рекламный бюджет, тыс. руб.",
+    "warranty_period": "Срок гарантии, лет",
+}
 
 
 QUALITY_METRICS = {
@@ -142,6 +174,238 @@ def calculate_forecast(sales_history, forecast_periods=3):
         forecast.append(round(max(value, 0), 2))
 
     return forecast
+
+
+class ManualLinearRegression:
+    def __init__(self):
+        self.means = []
+        self.stds = []
+        self.coefficients = []
+
+    def fit(self, X, y):
+        feature_count = len(X[0])
+        self.means = []
+        self.stds = []
+
+        for column_index in range(feature_count):
+            column_values = [row[column_index] for row in X]
+            mean_value = sum(column_values) / len(column_values)
+            variance = sum((value - mean_value) ** 2 for value in column_values) / len(column_values)
+            std_value = variance ** 0.5
+
+            self.means.append(mean_value)
+            self.stds.append(std_value if std_value != 0 else 1)
+
+        prepared_X = []
+
+        for row in X:
+            prepared_row = [1]
+
+            for index, value in enumerate(row):
+                prepared_row.append((value - self.means[index]) / self.stds[index])
+
+            prepared_X.append(prepared_row)
+
+        xtx = self._multiply_transpose_by_matrix(prepared_X)
+        xty = self._multiply_transpose_by_vector(prepared_X, y)
+        self.coefficients = self._solve_linear_system(xtx, xty)
+
+        return self
+
+    def predict(self, X):
+        predictions = []
+
+        for row in X:
+            prepared_row = [1]
+
+            for index, value in enumerate(row):
+                prepared_row.append((value - self.means[index]) / self.stds[index])
+
+            prediction = sum(
+                coefficient * value
+                for coefficient, value in zip(self.coefficients, prepared_row)
+            )
+            predictions.append(prediction)
+
+        return predictions
+
+    def _multiply_transpose_by_matrix(self, matrix):
+        result_size = len(matrix[0])
+        result = [
+            [0 for _ in range(result_size)]
+            for _ in range(result_size)
+        ]
+
+        for row in matrix:
+            for i in range(result_size):
+                for j in range(result_size):
+                    result[i][j] += row[i] * row[j]
+
+        return result
+
+    def _multiply_transpose_by_vector(self, matrix, vector):
+        result_size = len(matrix[0])
+        result = [0 for _ in range(result_size)]
+
+        for row, value in zip(matrix, vector):
+            for i in range(result_size):
+                result[i] += row[i] * value
+
+        return result
+
+    def _solve_linear_system(self, matrix, vector):
+        size = len(vector)
+        augmented = [
+            [float(value) for value in matrix[row_index]] + [float(vector[row_index])]
+            for row_index in range(size)
+        ]
+
+        for column_index in range(size):
+            pivot_row = max(
+                range(column_index, size),
+                key=lambda row_index: abs(augmented[row_index][column_index])
+            )
+
+            if abs(augmented[pivot_row][column_index]) < 1e-12:
+                raise ValueError("Не удалось обучить модель: матрица признаков вырождена.")
+
+            augmented[column_index], augmented[pivot_row] = augmented[pivot_row], augmented[column_index]
+            pivot = augmented[column_index][column_index]
+
+            for value_index in range(column_index, size + 1):
+                augmented[column_index][value_index] /= pivot
+
+            for row_index in range(size):
+                if row_index == column_index:
+                    continue
+
+                factor = augmented[row_index][column_index]
+
+                for value_index in range(column_index, size + 1):
+                    augmented[row_index][value_index] -= factor * augmented[column_index][value_index]
+
+        return [augmented[row_index][size] for row_index in range(size)]
+
+
+def load_demand_dataset(csv_path=DEMAND_DATA_PATH):
+    rows = []
+
+    with open(csv_path, "r", encoding="utf-8") as file:
+        reader = csv.DictReader(file)
+        required_columns = DEMAND_FEATURES + [DEMAND_TARGET]
+
+        if reader.fieldnames is None:
+            raise ValueError("CSV-файл пустой или не содержит заголовков.")
+
+        missing_columns = [
+            column for column in required_columns
+            if column not in reader.fieldnames
+        ]
+
+        if missing_columns:
+            raise ValueError(
+                "В CSV-файле отсутствуют столбцы: "
+                + ", ".join(missing_columns)
+            )
+
+        for row in reader:
+            rows.append(row)
+
+    if len(rows) < 10:
+        raise ValueError("Для обучения модели недостаточно строк в датасете.")
+
+    X = []
+    y = []
+
+    for row in rows:
+        X.append([float(row[feature]) for feature in DEMAND_FEATURES])
+        y.append(float(row[DEMAND_TARGET]))
+
+    return X, y, rows
+
+
+def split_train_test_manual(X, y, test_size=0.2, random_state=101):
+    indexes = list(range(len(X)))
+    random.Random(random_state).shuffle(indexes)
+    test_count = max(1, int(len(indexes) * test_size))
+    test_indexes = indexes[:test_count]
+    train_indexes = indexes[test_count:]
+
+    X_train = [X[index] for index in train_indexes]
+    X_test = [X[index] for index in test_indexes]
+    y_train = [y[index] for index in train_indexes]
+    y_test = [y[index] for index in test_indexes]
+
+    return X_train, X_test, y_train, y_test
+
+
+def calculate_regression_metrics(actual_values, predicted_values):
+    count = len(actual_values)
+    mae = sum(
+        abs(actual - predicted)
+        for actual, predicted in zip(actual_values, predicted_values)
+    ) / count
+    mse = sum(
+        (actual - predicted) ** 2
+        for actual, predicted in zip(actual_values, predicted_values)
+    ) / count
+    rmse = mse ** 0.5
+    average_actual = sum(actual_values) / count
+    ss_res = sum(
+        (actual - predicted) ** 2
+        for actual, predicted in zip(actual_values, predicted_values)
+    )
+    ss_tot = sum((actual - average_actual) ** 2 for actual in actual_values)
+    r2 = 1 - ss_res / ss_tot if ss_tot != 0 else 0
+
+    return mae, rmse, r2
+
+
+def train_demand_model(csv_path=DEMAND_DATA_PATH):
+    X, y, rows = load_demand_dataset(csv_path)
+
+    if LinearRegression is not None:
+        X_train, X_test, y_train, y_test = train_test_split(
+            X,
+            y,
+            test_size=0.2,
+            random_state=101
+        )
+        model = LinearRegression()
+        model.fit(X_train, y_train)
+        test_predictions = model.predict(X_test)
+        mae = mean_absolute_error(y_test, test_predictions)
+        mse = mean_squared_error(y_test, test_predictions)
+        rmse = mse ** 0.5
+        r2 = r2_score(y_test, test_predictions)
+        model_name = "LinearRegression из scikit-learn"
+    else:
+        X_train, X_test, y_train, y_test = split_train_test_manual(X, y)
+        model = ManualLinearRegression()
+        model.fit(X_train, y_train)
+        test_predictions = model.predict(X_test)
+        mae, rmse, r2 = calculate_regression_metrics(y_test, test_predictions)
+        model_name = "встроенная линейная регрессия"
+
+    return {
+        "model": model,
+        "rows": rows,
+        "test_actual": list(y_test),
+        "test_predictions": list(test_predictions),
+        "mae": mae,
+        "rmse": rmse,
+        "r2": r2,
+        "csv_path": csv_path,
+        "model_name": model_name,
+    }
+
+
+def predict_monthly_demand(model_info, input_values):
+    model = model_info["model"]
+    X_new = [[float(input_values[feature]) for feature in DEMAND_FEATURES]]
+    prediction = model.predict(X_new)[0]
+
+    return round(max(prediction, 0), 2)
 
 
 def find_optimal_equipment_set(products, budget, required_volume, selected_type):
@@ -1128,6 +1392,213 @@ def create_product_profile_tab(parent, products):
     reset_products_for_type()
 
 
+def create_demand_tab(parent):
+    title = ttk.Label(
+        parent,
+        text="Расчёт спроса на холодильное оборудование",
+        font=TITLE_FONT
+    )
+    title.pack(pady=10)
+
+    model_info = {"data": None}
+
+    dataset_frame = ttk.LabelFrame(parent, text="Датасет для обучения модели")
+    dataset_frame.pack(fill="x", padx=10, pady=8)
+
+    dataset_label = ttk.Label(
+        dataset_frame,
+        text=f"Файл: {DEMAND_DATA_PATH}"
+    )
+    dataset_label.pack(side="left", padx=10, pady=8)
+
+    ttk.Button(
+        dataset_frame,
+        text="Загрузить CSV",
+        command=lambda: choose_csv_file()
+    ).pack(side="right", padx=10, pady=8)
+
+    metrics_frame = ttk.LabelFrame(parent, text="Качество модели")
+    metrics_frame.pack(fill="x", padx=10, pady=8)
+
+    metrics_label = ttk.Label(metrics_frame, text="", justify="left")
+    metrics_label.pack(fill="x", padx=10, pady=8)
+
+    input_frame = ttk.LabelFrame(parent, text="Входные параметры")
+    input_frame.pack(fill="x", padx=10, pady=8)
+
+    input_widgets = {}
+
+    default_values = {
+        "avg_refrigerator_price": "120",
+        "energy_efficiency_class": "3",
+        "is_seasonal_demand": "1",
+        "advertising_budget": "500",
+        "warranty_period": "5",
+    }
+
+    for row_index, feature in enumerate(DEMAND_FEATURES):
+        ttk.Label(
+            input_frame,
+            text=DEMAND_FEATURE_LABELS[feature] + ":"
+        ).grid(row=row_index, column=0, padx=8, pady=5, sticky="w")
+
+        if feature == "energy_efficiency_class":
+            widget = ttk.Combobox(
+                input_frame,
+                values=["1", "2", "3"],
+                state="readonly",
+                width=24
+            )
+            widget.set(default_values[feature])
+        elif feature == "is_seasonal_demand":
+            widget = ttk.Combobox(
+                input_frame,
+                values=["0", "1"],
+                state="readonly",
+                width=24
+            )
+            widget.set(default_values[feature])
+        else:
+            widget = ttk.Entry(input_frame, width=27)
+            widget.insert(0, default_values[feature])
+
+        widget.grid(row=row_index, column=1, padx=8, pady=5, sticky="w")
+        input_widgets[feature] = widget
+
+    result_label = ttk.Label(
+        input_frame,
+        text="Введите параметры и нажмите «Рассчитать спрос».",
+        font=("Arial", 12, "bold")
+    )
+    result_label.grid(
+        row=0,
+        column=2,
+        rowspan=2,
+        padx=16,
+        pady=5,
+        sticky="w"
+    )
+
+    ttk.Button(
+        input_frame,
+        text="Рассчитать спрос",
+        command=lambda: calculate_demand()
+    ).grid(
+        row=len(DEMAND_FEATURES),
+        column=0,
+        columnspan=2,
+        padx=8,
+        pady=10,
+        sticky="w"
+    )
+
+    chart_frame = ttk.LabelFrame(parent, text="Фактические и прогнозные значения на тестовой выборке")
+    chart_frame.pack(fill="both", expand=True, padx=10, pady=8)
+
+    def draw_demand_chart():
+        for widget in chart_frame.winfo_children():
+            widget.destroy()
+
+        current_model = model_info["data"]
+
+        if current_model is None:
+            return
+
+        actual_values = current_model["test_actual"]
+        predicted_values = current_model["test_predictions"]
+        x_values = list(range(1, len(actual_values) + 1))
+
+        figure = Figure(figsize=(8, 3.4), dpi=100)
+        axes = figure.add_subplot(111)
+
+        axes.plot(
+            x_values,
+            actual_values,
+            marker="o",
+            label="Фактические продажи"
+        )
+        axes.plot(
+            x_values,
+            predicted_values,
+            marker="s",
+            label="Прогноз модели"
+        )
+
+        axes.set_xlabel("Наблюдение тестовой выборки")
+        axes.set_ylabel("Продажи, ед.")
+        axes.set_title("Проверка модели линейной регрессии")
+        axes.grid(True)
+        axes.legend()
+        figure.tight_layout()
+
+        canvas = FigureCanvasTkAgg(figure, chart_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+
+    def update_metrics():
+        current_model = model_info["data"]
+
+        if current_model is None:
+            metrics_label.config(text="")
+            return
+
+        metrics_label.config(
+            text=(
+                f"Модель: {current_model['model_name']}\n"
+                f"Количество строк в датасете: {len(current_model['rows'])}\n"
+                f"MAE: {current_model['mae']:.2f}\n"
+                f"RMSE: {current_model['rmse']:.2f}\n"
+                f"R2: {current_model['r2']:.4f}"
+            )
+        )
+
+    def train_from_csv(csv_path):
+        try:
+            model_info["data"] = train_demand_model(csv_path)
+            dataset_label.config(text=f"Файл: {csv_path}")
+            update_metrics()
+            draw_demand_chart()
+        except Exception as error:
+            model_info["data"] = None
+            messagebox.showerror("Ошибка загрузки датасета", str(error))
+
+    def choose_csv_file():
+        file_path = filedialog.askopenfilename(
+            title="Выберите CSV-файл",
+            filetypes=[
+                ("CSV files", "*.csv"),
+                ("All files", "*.*"),
+            ]
+        )
+
+        if file_path:
+            train_from_csv(Path(file_path))
+
+    def calculate_demand():
+        current_model = model_info["data"]
+
+        if current_model is None:
+            messagebox.showerror("Ошибка", "Сначала загрузите датасет.")
+            return
+
+        try:
+            input_values = {
+                feature: input_widgets[feature].get()
+                for feature in DEMAND_FEATURES
+            }
+            prediction = predict_monthly_demand(current_model, input_values)
+            result_label.config(
+                text=f"Прогнозируемый месячный объём продаж: {prediction} ед."
+            )
+        except ValueError:
+            messagebox.showerror(
+                "Ошибка ввода",
+                "Все входные параметры должны быть числовыми."
+            )
+
+    train_from_csv(DEMAND_DATA_PATH)
+
+
 def create_info_tab(parent):
     title = ttk.Label(
         parent,
@@ -1193,6 +1664,7 @@ def main():
     quality_tab = ttk.Frame(tabs)
     profile_tab = ttk.Frame(tabs)
     forecast_tab = ttk.Frame(tabs)
+    demand_tab = ttk.Frame(tabs)
     optimization_tab = ttk.Frame(tabs)
     info_tab = ttk.Frame(tabs)
 
@@ -1200,6 +1672,7 @@ def main():
     tabs.add(quality_tab, text="Оценка качества")
     tabs.add(profile_tab, text="Профиль товара")
     tabs.add(forecast_tab, text="Прогноз")
+    tabs.add(demand_tab, text="Расчёт спроса")
     tabs.add(optimization_tab, text="Оптимизация")
     tabs.add(info_tab, text="Информация")
 
@@ -1208,6 +1681,7 @@ def main():
     create_quality_tab(quality_tab, products)
     create_product_profile_tab(profile_tab, products)
     create_forecast_tab(forecast_tab, products)
+    create_demand_tab(demand_tab)
     create_optimization_tab(optimization_tab, products)
     create_info_tab(info_tab)
 
