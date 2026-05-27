@@ -1,6 +1,7 @@
 import csv
 import json
 import random
+import time
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
@@ -18,6 +19,11 @@ except ModuleNotFoundError:
     mean_absolute_error = None
     mean_squared_error = None
     r2_score = None
+
+try:
+    from scipy.optimize import linprog
+except ModuleNotFoundError:
+    linprog = None
 
 
 
@@ -464,7 +470,7 @@ def find_optimal_equipment_set(products, budget, required_volume, selected_type)
     }
 
 
-def create_optimization_tab(parent, products):
+def create_equipment_selection_tab(parent, products):
     title = ttk.Label(
         parent,
         text="Оптимизация подбора оборудования",
@@ -615,6 +621,322 @@ def create_optimization_tab(parent, products):
 
 
 
+def create_optimization_tab(parent, products):
+    inner_tabs = ttk.Notebook(parent)
+    inner_tabs.pack(fill="both", expand=True)
+
+    equipment_tab = ttk.Frame(inner_tabs)
+    supply_tab = ttk.Frame(inner_tabs)
+
+    inner_tabs.add(equipment_tab, text="Подбор оборудования")
+    inner_tabs.add(supply_tab, text="План поставок")
+
+    create_equipment_selection_tab(equipment_tab, products)
+    create_supply_plan_tab(supply_tab)
+
+
+
+def solve_supply_plan():
+    costs = [
+        [180, 200, 220, 240],
+        [210, 190, 210, 230]
+    ]
+
+    supply = [300, 250]
+    demand = [120, 150, 180, 80]
+
+    # Вектор коэффициентов целевой функции
+    c = [value for row in costs for value in row]
+
+    A_ub = [
+        [1, 1, 1, 1, 0, 0, 0, 0],
+        [0, 0, 0, 0, 1, 1, 1, 1]
+    ]
+
+    b_ub = supply
+
+    A_eq = [
+        [1, 0, 0, 0, 1, 0, 0, 0],
+        [0, 1, 0, 0, 0, 1, 0, 0],
+        [0, 0, 1, 0, 0, 0, 1, 0],
+        [0, 0, 0, 1, 0, 0, 0, 1]
+    ]
+
+    b_eq = demand
+    bounds = [(0, None)] * 8
+
+    methods = ["highs", "highs-ds", "highs-ipm"]
+    method_results = []
+
+    best_result = None
+
+    for method in methods:
+        start_time = time.perf_counter()
+
+        result = linprog(
+            c=c,
+            A_ub=A_ub,
+            b_ub=b_ub,
+            A_eq=A_eq,
+            b_eq=b_eq,
+            bounds=bounds,
+            method=method
+        )
+
+        elapsed_time = time.perf_counter() - start_time
+
+        method_results.append({
+            "method": method,
+            "success": result.success,
+            "cost": result.fun if result.success else None,
+            "time": elapsed_time
+        })
+
+        if method == "highs":
+            best_result = result
+
+    return best_result, method_results
+
+
+
+SUPPLY_MODEL_TEXT = """Целевая функция:
+
+min Z = 180x11 + 200x12 + 220x13 + 240x14
+      + 210x21 + 190x22 + 210x23 + 230x24
+
+Ограничения по мощности заводов:
+
+x11 + x12 + x13 + x14 <= 300
+x21 + x22 + x23 + x24 <= 250
+
+Ограничения по спросу супермаркетов:
+
+x11 + x21 = 120
+x12 + x22 = 150
+x13 + x23 = 180
+x14 + x24 = 80
+
+Условие неотрицательности:
+
+xij >= 0
+
+Вектор c:
+[180, 200, 220, 240, 210, 190, 210, 230]
+
+Матрица A_ub:
+[
+ [1, 1, 1, 1, 0, 0, 0, 0],
+ [0, 0, 0, 0, 1, 1, 1, 1]
+]
+
+Вектор b_ub:
+[300, 250]
+
+Матрица A_eq:
+[
+ [1, 0, 0, 0, 1, 0, 0, 0],
+ [0, 1, 0, 0, 0, 1, 0, 0],
+ [0, 0, 1, 0, 0, 0, 1, 0],
+ [0, 0, 0, 1, 0, 0, 0, 1]
+]
+
+Вектор b_eq:
+[120, 150, 180, 80]
+"""
+
+
+
+def create_supply_plan_tab(parent):
+    canvas = tk.Canvas(parent, highlightthickness=0)
+    scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+    scrollable_frame = ttk.Frame(canvas)
+    scrollable_window = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+
+    def update_scroll_region(event=None):
+        canvas.configure(scrollregion=canvas.bbox("all"))
+
+    def resize_scrollable_frame(event):
+        canvas.itemconfigure(scrollable_window, width=event.width)
+
+    def bind_mousewheel(event):
+        canvas.bind_all("<MouseWheel>", on_mousewheel)
+
+    def unbind_mousewheel(event):
+        canvas.unbind_all("<MouseWheel>")
+
+    def on_mousewheel(event):
+        canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+    scrollable_frame.bind("<Configure>", update_scroll_region)
+    scrollable_frame.bind("<Enter>", bind_mousewheel)
+    scrollable_frame.bind("<Leave>", unbind_mousewheel)
+    canvas.bind("<Configure>", resize_scrollable_frame)
+    canvas.configure(yscrollcommand=scrollbar.set)
+    canvas.pack(side="left", fill="both", expand=True)
+    scrollbar.pack(side="right", fill="y")
+
+    parent = scrollable_frame
+
+    title = ttk.Label(
+        parent,
+        text="Оптимизация поставок холодильного оборудования",
+        font=TITLE_FONT
+    )
+    title.pack(pady=10)
+
+    description = ttk.Label(
+        parent,
+        text=(
+            "Вариант 22: необходимо распределить поставки от заводов Z1 и Z2 "
+            "к супермаркетам S1-S4 с минимальными суммарными затратами."
+        ),
+        wraplength=950,
+        justify="left"
+    )
+    description.pack(fill="x", padx=10, pady=5)
+
+    input_frame = ttk.LabelFrame(parent, text="Исходные данные")
+    input_frame.pack(fill="x", padx=10, pady=8)
+
+    input_text = (
+        "Мощности заводов: Z1 = 300, Z2 = 250 ед./квартал\n"
+        "Спрос: S1 = 120, S2 = 150, S3 = 180, S4 = 80 ед./квартал\n"
+        "Матрица затрат, тыс. руб./ед.:\n"
+        "Z1: 180, 200, 220, 240\n"
+        "Z2: 210, 190, 210, 230"
+    )
+
+    ttk.Label(
+        input_frame,
+        text=input_text,
+        justify="left"
+    ).pack(anchor="w", padx=10, pady=8)
+
+
+    model_frame = ttk.LabelFrame(parent, text="Математическая модель и коэффициенты")
+    model_frame.pack(fill="both", padx=10, pady=8)
+
+    model_text = tk.Text(
+        model_frame,
+        height=16,
+        wrap="none",
+        font=("Consolas", 10)
+    )
+
+    model_text.insert("1.0", SUPPLY_MODEL_TEXT)
+    model_text.config(state="disabled")
+    model_text.pack(fill="both", expand=True, padx=10, pady=8)
+
+    result_frame = ttk.LabelFrame(parent, text="Оптимальный план поставок")
+    result_frame.pack(fill="both", expand=True, padx=10, pady=8)
+
+    result_label = ttk.Label(result_frame, text="", justify="left")
+    result_label.pack(fill="x", padx=10, pady=8)
+
+    plan_columns = ("factory", "s1", "s2", "s3", "s4", "total", "remaining")
+    plan_table = ttk.Treeview(result_frame, columns=plan_columns, show="headings", height=3)
+
+    headings = {
+        "factory": "Завод",
+        "s1": "S1",
+        "s2": "S2",
+        "s3": "S3",
+        "s4": "S4",
+        "total": "Итого",
+        "remaining": "Остаток"
+    }
+
+    for column, heading in headings.items():
+        plan_table.heading(column, text=heading)
+        plan_table.column(column, width=110, anchor="center")
+
+    plan_table.pack(fill="x", padx=10, pady=8)
+
+    methods_columns = ("method", "success", "cost", "time")
+    methods_table = ttk.Treeview(result_frame, columns=methods_columns, show="headings", height=4)
+
+    methods_table.heading("method", text="Метод")
+    methods_table.heading("success", text="Решение")
+    methods_table.heading("cost", text="Затраты")
+    methods_table.heading("time", text="Время, сек.")
+
+    methods_table.column("method", width=140, anchor="center")
+    methods_table.column("success", width=120, anchor="center")
+    methods_table.column("cost", width=160, anchor="center")
+    methods_table.column("time", width=160, anchor="center")
+
+    methods_table.pack(fill="x", padx=10, pady=8)
+
+    def calculate_supply_plan():
+        if linprog is None:
+            messagebox.showerror(
+                "Ошибка",
+                "Библиотека SciPy не установлена. Установите scipy для выполнения расчета."
+            )
+            return
+
+        for row in plan_table.get_children():
+            plan_table.delete(row)
+
+        for row in methods_table.get_children():
+            methods_table.delete(row)
+
+        result, method_results = solve_supply_plan()
+
+        if result is None or not result.success:
+            result_label.config(text="Решение не найдено.")
+            return
+
+        plan = [
+            result.x[0:4],
+            result.x[4:8]
+        ]
+
+        factories = ["Z1", "Z2"]
+        supply = [300, 250]
+
+        for index, row in enumerate(plan):
+            used_supply = sum(row)
+            remaining_supply = supply[index] - used_supply
+            plan_table.insert(
+                "",
+                tk.END,
+                values=(
+                    factories[index],
+                    round(row[0], 2),
+                    round(row[1], 2),
+                    round(row[2], 2),
+                    round(row[3], 2),
+                    round(used_supply, 2),
+                    round(remaining_supply, 2)
+                )
+            )
+
+        for method_result in method_results:
+            methods_table.insert(
+                "",
+                tk.END,
+                values=(
+                    method_result["method"],
+                    "Да" if method_result["success"] else "Нет",
+                    round(method_result["cost"], 2) if method_result["cost"] is not None else "-",
+                    round(method_result["time"], 6)
+                )
+            )
+
+        result_label.config(
+            text=(
+                f"Минимальные суммарные затраты: {result.fun:.0f} тыс. руб.\n"
+                "Ограничения по мощности заданы через <=, так как мощность заводов "
+                "550 ед./квартал больше суммарного спроса 530 ед./квартал."
+            )
+        )
+
+    ttk.Button(
+        input_frame,
+    text="Рассчитать план поставок",
+    command=calculate_supply_plan
+).pack(anchor="w", padx=10, pady=(0, 8))
 
 def create_forecast_tab(parent, products):
     title = ttk.Label(
