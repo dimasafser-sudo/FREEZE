@@ -636,34 +636,144 @@ def create_optimization_tab(parent, products):
 
 
 
-def solve_supply_plan():
-    costs = [
-        [180, 200, 220, 240],
-        [210, 190, 210, 230]
+DEFAULT_SUPPLY_COSTS = [
+    [180, 200, 220, 240],
+    [210, 190, 210, 230]
+]
+DEFAULT_SUPPLY = [300, 250]
+DEFAULT_DEMAND = [120, 150, 180, 80]
+FACTORY_NAMES = ["Z1", "Z2"]
+MARKET_NAMES = ["S1", "S2", "S3", "S4"]
+
+
+def format_number(value):
+    if float(value).is_integer():
+        return str(int(value))
+
+    return f"{value:.2f}".rstrip("0").rstrip(".")
+
+
+def build_supply_matrices(supply, demand):
+    factory_count = len(supply)
+    market_count = len(demand)
+    variable_count = factory_count * market_count
+
+    A_ub = []
+
+    for factory_index in range(factory_count):
+        row = [0] * variable_count
+
+        for market_index in range(market_count):
+            row[factory_index * market_count + market_index] = 1
+
+        A_ub.append(row)
+
+    A_eq = []
+
+    for market_index in range(market_count):
+        row = [0] * variable_count
+
+        for factory_index in range(factory_count):
+            row[factory_index * market_count + market_index] = 1
+
+        A_eq.append(row)
+
+    return A_ub, A_eq
+
+
+def format_vector(values):
+    return "[" + ", ".join(format_number(value) for value in values) + "]"
+
+
+def format_matrix(matrix):
+    rows = [
+        " " + format_vector(row)
+        for row in matrix
     ]
 
-    supply = [300, 250]
-    demand = [120, 150, 180, 80]
+    return "[\n" + "\n".join(rows) + "\n]"
+
+
+def build_supply_model_text(costs, supply, demand):
+    c = [value for row in costs for value in row]
+    A_ub, A_eq = build_supply_matrices(supply, demand)
+
+    objective_lines = []
+
+    for factory_index, row in enumerate(costs):
+        terms = [
+            f"{format_number(value)}x{factory_index + 1}{market_index + 1}"
+            for market_index, value in enumerate(row)
+        ]
+        prefix = "min Z = " if factory_index == 0 else "      + "
+        objective_lines.append(prefix + " + ".join(terms))
+
+    supply_lines = []
+
+    for factory_index, value in enumerate(supply):
+        terms = [
+            f"x{factory_index + 1}{market_index + 1}"
+            for market_index in range(len(demand))
+        ]
+        supply_lines.append(" + ".join(terms) + f" <= {format_number(value)}")
+
+    demand_lines = []
+
+    for market_index, value in enumerate(demand):
+        terms = [
+            f"x{factory_index + 1}{market_index + 1}"
+            for factory_index in range(len(supply))
+        ]
+        demand_lines.append(" + ".join(terms) + f" = {format_number(value)}")
+
+    return f"""Целевая функция:
+
+{chr(10).join(objective_lines)}
+
+Ограничения по мощности заводов:
+
+{chr(10).join(supply_lines)}
+
+Ограничения по спросу супермаркетов:
+
+{chr(10).join(demand_lines)}
+
+Условие неотрицательности:
+
+xij >= 0
+
+Вектор c:
+{format_vector(c)}
+
+Матрица A_ub:
+{format_matrix(A_ub)}
+
+Вектор b_ub:
+{format_vector(supply)}
+
+Матрица A_eq:
+{format_matrix(A_eq)}
+
+Вектор b_eq:
+{format_vector(demand)}
+"""
+
+
+def solve_supply_plan(costs=None, supply=None, demand=None):
+    if costs is None:
+        costs = DEFAULT_SUPPLY_COSTS
+    if supply is None:
+        supply = DEFAULT_SUPPLY
+    if demand is None:
+        demand = DEFAULT_DEMAND
 
     # Вектор коэффициентов целевой функции
     c = [value for row in costs for value in row]
-
-    A_ub = [
-        [1, 1, 1, 1, 0, 0, 0, 0],
-        [0, 0, 0, 0, 1, 1, 1, 1]
-    ]
+    A_ub, A_eq = build_supply_matrices(supply, demand)
 
     b_ub = supply
-
-    A_eq = [
-        [1, 0, 0, 0, 1, 0, 0, 0],
-        [0, 1, 0, 0, 0, 1, 0, 0],
-        [0, 0, 1, 0, 0, 0, 1, 0],
-        [0, 0, 0, 1, 0, 0, 0, 1]
-    ]
-
     b_eq = demand
-    bounds = [(0, None)] * 8
+    bounds = [(0, None)] * len(c)
 
     methods = ["highs", "highs-ds", "highs-ipm"]
     method_results = []
@@ -699,50 +809,11 @@ def solve_supply_plan():
 
 
 
-SUPPLY_MODEL_TEXT = """Целевая функция:
-
-min Z = 180x11 + 200x12 + 220x13 + 240x14
-      + 210x21 + 190x22 + 210x23 + 230x24
-
-Ограничения по мощности заводов:
-
-x11 + x12 + x13 + x14 <= 300
-x21 + x22 + x23 + x24 <= 250
-
-Ограничения по спросу супермаркетов:
-
-x11 + x21 = 120
-x12 + x22 = 150
-x13 + x23 = 180
-x14 + x24 = 80
-
-Условие неотрицательности:
-
-xij >= 0
-
-Вектор c:
-[180, 200, 220, 240, 210, 190, 210, 230]
-
-Матрица A_ub:
-[
- [1, 1, 1, 1, 0, 0, 0, 0],
- [0, 0, 0, 0, 1, 1, 1, 1]
-]
-
-Вектор b_ub:
-[300, 250]
-
-Матрица A_eq:
-[
- [1, 0, 0, 0, 1, 0, 0, 0],
- [0, 1, 0, 0, 0, 1, 0, 0],
- [0, 0, 1, 0, 0, 0, 1, 0],
- [0, 0, 0, 1, 0, 0, 0, 1]
-]
-
-Вектор b_eq:
-[120, 150, 180, 80]
-"""
+SUPPLY_MODEL_TEXT = build_supply_model_text(
+    DEFAULT_SUPPLY_COSTS,
+    DEFAULT_SUPPLY,
+    DEFAULT_DEMAND
+)
 
 
 
@@ -798,19 +869,72 @@ def create_supply_plan_tab(parent):
     input_frame = ttk.LabelFrame(parent, text="Исходные данные")
     input_frame.pack(fill="x", padx=10, pady=8)
 
-    input_text = (
-        "Мощности заводов: Z1 = 300, Z2 = 250 ед./квартал\n"
-        "Спрос: S1 = 120, S2 = 150, S3 = 180, S4 = 80 ед./квартал\n"
-        "Матрица затрат, тыс. руб./ед.:\n"
-        "Z1: 180, 200, 220, 240\n"
-        "Z2: 210, 190, 210, 230"
-    )
+    def create_number_entry(container, value, width=10):
+        entry = ttk.Entry(container, width=width)
+        entry.insert(0, format_number(value))
+
+        return entry
+
+    input_frame.columnconfigure(0, weight=1)
 
     ttk.Label(
         input_frame,
-        text=input_text,
-        justify="left"
-    ).pack(anchor="w", padx=10, pady=8)
+        text="Мощности заводов, ед./квартал"
+    ).grid(row=0, column=0, columnspan=4, padx=10, pady=(8, 2), sticky="w")
+
+    supply_frame = ttk.Frame(input_frame)
+    supply_frame.grid(row=1, column=0, padx=10, pady=2, sticky="w")
+
+    supply_entries = []
+
+    for index, name in enumerate(FACTORY_NAMES):
+        ttk.Label(supply_frame, text=f"{name}:").grid(row=0, column=index * 2, padx=(0, 4), pady=2)
+        entry = create_number_entry(supply_frame, DEFAULT_SUPPLY[index])
+        entry.grid(row=0, column=index * 2 + 1, padx=(0, 12), pady=2)
+        supply_entries.append(entry)
+
+    ttk.Label(
+        input_frame,
+        text="Спрос супермаркетов, ед./квартал"
+    ).grid(row=2, column=0, columnspan=4, padx=10, pady=(8, 2), sticky="w")
+
+    demand_frame = ttk.Frame(input_frame)
+    demand_frame.grid(row=3, column=0, padx=10, pady=2, sticky="w")
+
+    demand_entries = []
+
+    for index, name in enumerate(MARKET_NAMES):
+        ttk.Label(demand_frame, text=f"{name}:").grid(row=0, column=index * 2, padx=(0, 4), pady=2)
+        entry = create_number_entry(demand_frame, DEFAULT_DEMAND[index])
+        entry.grid(row=0, column=index * 2 + 1, padx=(0, 12), pady=2)
+        demand_entries.append(entry)
+
+    ttk.Label(
+        input_frame,
+        text="Матрица затрат, тыс. руб./ед."
+    ).grid(row=4, column=0, columnspan=4, padx=10, pady=(8, 2), sticky="w")
+
+    cost_frame = ttk.Frame(input_frame)
+    cost_frame.grid(row=5, column=0, padx=10, pady=2, sticky="w")
+
+    for index, name in enumerate(MARKET_NAMES):
+        ttk.Label(cost_frame, text=name).grid(row=0, column=index + 1, padx=4, pady=2)
+
+    cost_entries = []
+
+    for factory_index, name in enumerate(FACTORY_NAMES):
+        ttk.Label(cost_frame, text=name).grid(row=factory_index + 1, column=0, padx=(0, 6), pady=2)
+        row_entries = []
+
+        for market_index, value in enumerate(DEFAULT_SUPPLY_COSTS[factory_index]):
+            entry = create_number_entry(cost_frame, value)
+            entry.grid(row=factory_index + 1, column=market_index + 1, padx=4, pady=2)
+            row_entries.append(entry)
+
+        cost_entries.append(row_entries)
+
+    actions_frame = ttk.Frame(input_frame)
+    actions_frame.grid(row=6, column=0, padx=10, pady=(8, 8), sticky="w")
 
 
     model_frame = ttk.LabelFrame(parent, text="Математическая модель и коэффициенты")
@@ -826,6 +950,100 @@ def create_supply_plan_tab(parent):
     model_text.insert("1.0", SUPPLY_MODEL_TEXT)
     model_text.config(state="disabled")
     model_text.pack(fill="both", expand=True, padx=10, pady=8)
+
+    all_input_entries = (
+        supply_entries
+        + demand_entries
+        + [entry for row in cost_entries for entry in row]
+    )
+
+    def read_number(entry, label):
+        raw_value = entry.get().strip().replace(" ", "").replace("\xa0", "").replace(",", ".")
+
+        if not raw_value:
+            raise ValueError(f"Поле «{label}» не заполнено.")
+
+        try:
+            value = float(raw_value)
+        except ValueError as error:
+            raise ValueError(f"Поле «{label}» должно быть числом.") from error
+
+        if value < 0:
+            raise ValueError(f"Поле «{label}» не может быть отрицательным.")
+
+        return value
+
+    def read_supply_inputs(check_balance=True):
+        supply = [
+            read_number(entry, f"мощность {FACTORY_NAMES[index]}")
+            for index, entry in enumerate(supply_entries)
+        ]
+        demand = [
+            read_number(entry, f"спрос {MARKET_NAMES[index]}")
+            for index, entry in enumerate(demand_entries)
+        ]
+        costs = []
+
+        for factory_index, row_entries in enumerate(cost_entries):
+            costs.append([
+                read_number(
+                    entry,
+                    f"затраты {FACTORY_NAMES[factory_index]}-{MARKET_NAMES[market_index]}"
+                )
+                for market_index, entry in enumerate(row_entries)
+            ])
+
+        if check_balance and sum(supply) + 1e-9 < sum(demand):
+            raise ValueError(
+                "Суммарная мощность заводов меньше суммарного спроса. "
+                "Увеличьте мощности или уменьшите спрос."
+            )
+
+        return costs, supply, demand
+
+    def set_model_text(text):
+        model_text.config(state="normal")
+        model_text.delete("1.0", tk.END)
+        model_text.insert("1.0", text)
+        model_text.config(state="disabled")
+
+    def update_supply_model_text(event=None):
+        try:
+            costs, supply, demand = read_supply_inputs(check_balance=False)
+        except ValueError:
+            return
+
+        set_model_text(build_supply_model_text(costs, supply, demand))
+
+    def clear_supply_results():
+        result_label.config(text="")
+
+        for row in plan_table.get_children():
+            plan_table.delete(row)
+
+        for row in methods_table.get_children():
+            methods_table.delete(row)
+
+    def reset_supply_inputs():
+        for entry, value in zip(supply_entries, DEFAULT_SUPPLY):
+            entry.delete(0, tk.END)
+            entry.insert(0, format_number(value))
+
+        for entry, value in zip(demand_entries, DEFAULT_DEMAND):
+            entry.delete(0, tk.END)
+            entry.insert(0, format_number(value))
+
+        for row_entries, default_row in zip(cost_entries, DEFAULT_SUPPLY_COSTS):
+            for entry, value in zip(row_entries, default_row):
+                entry.delete(0, tk.END)
+                entry.insert(0, format_number(value))
+
+        set_model_text(SUPPLY_MODEL_TEXT)
+        clear_supply_results()
+
+    for entry in all_input_entries:
+        entry.bind("<FocusOut>", update_supply_model_text)
+        entry.bind("<Return>", update_supply_model_text)
 
     result_frame = ttk.LabelFrame(parent, text="Оптимальный план поставок")
     result_frame.pack(fill="both", expand=True, padx=10, pady=8)
@@ -875,13 +1093,16 @@ def create_supply_plan_tab(parent):
             )
             return
 
-        for row in plan_table.get_children():
-            plan_table.delete(row)
+        try:
+            costs, supply, demand = read_supply_inputs()
+        except ValueError as error:
+            messagebox.showerror("Ошибка ввода", str(error))
+            return
 
-        for row in methods_table.get_children():
-            methods_table.delete(row)
+        clear_supply_results()
+        set_model_text(build_supply_model_text(costs, supply, demand))
 
-        result, method_results = solve_supply_plan()
+        result, method_results = solve_supply_plan(costs, supply, demand)
 
         if result is None or not result.success:
             result_label.config(text="Решение не найдено.")
@@ -892,9 +1113,6 @@ def create_supply_plan_tab(parent):
             result.x[4:8]
         ]
 
-        factories = ["Z1", "Z2"]
-        supply = [300, 250]
-
         for index, row in enumerate(plan):
             used_supply = sum(row)
             remaining_supply = supply[index] - used_supply
@@ -902,7 +1120,7 @@ def create_supply_plan_tab(parent):
                 "",
                 tk.END,
                 values=(
-                    factories[index],
+                    FACTORY_NAMES[index],
                     round(row[0], 2),
                     round(row[1], 2),
                     round(row[2], 2),
@@ -924,19 +1142,39 @@ def create_supply_plan_tab(parent):
                 )
             )
 
+        unused_capacity = sum(supply) - sum(demand)
+
+        if unused_capacity > 1e-9:
+            balance_text = (
+                "Ограничения по мощности заданы через <=: суммарная мощность "
+                f"{format_number(sum(supply))} ед./квартал больше суммарного спроса "
+                f"{format_number(sum(demand))} ед./квартал, возможный остаток "
+                f"{format_number(unused_capacity)} ед."
+            )
+        else:
+            balance_text = (
+                "Суммарная мощность заводов равна суммарному спросу: "
+                f"{format_number(sum(supply))} ед./квартал."
+            )
+
         result_label.config(
             text=(
                 f"Минимальные суммарные затраты: {result.fun:.0f} тыс. руб.\n"
-                "Ограничения по мощности заданы через <=, так как мощность заводов "
-                "550 ед./квартал больше суммарного спроса 530 ед./квартал."
+                f"{balance_text}"
             )
         )
 
     ttk.Button(
-        input_frame,
-    text="Рассчитать план поставок",
-    command=calculate_supply_plan
-).pack(anchor="w", padx=10, pady=(0, 8))
+        actions_frame,
+        text="Рассчитать план поставок",
+        command=calculate_supply_plan
+    ).pack(side="left", padx=(0, 8))
+
+    ttk.Button(
+        actions_frame,
+        text="Сбросить к варианту 22",
+        command=reset_supply_inputs
+    ).pack(side="left")
 
 def create_forecast_tab(parent, products):
     title = ttk.Label(
@@ -1833,22 +2071,24 @@ def create_demand_tab(parent):
         figure = Figure(figsize=(8, 3.4), dpi=100)
         axes = figure.add_subplot(111)
 
-        axes.plot(
+        axes.scatter(
             x_values,
             actual_values,
             marker="o",
-            label="Фактические продажи"
+            color="#2F66D0",
+            label="фактическое значение"
         )
-        axes.plot(
+        axes.scatter(
             x_values,
             predicted_values,
             marker="s",
-            label="Прогноз модели"
+            color="#F28E2B",
+            label="Прогноз линейной регрессии"
         )
 
-        axes.set_xlabel("Наблюдение тестовой выборки")
-        axes.set_ylabel("Продажи, ед.")
-        axes.set_title("Проверка модели линейной регрессии")
+        axes.set_xlabel("Номер наблюдения в тестовой выборке")
+        axes.set_ylabel("Спрос, ед.")
+        axes.set_title("Сравнение фактического и прогнозного спроса на тестовой выборке")
         axes.grid(True)
         axes.legend()
         figure.tight_layout()
